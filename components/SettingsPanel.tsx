@@ -137,36 +137,25 @@ export default function SettingsPanel({ settings, activeTZ, onSettings, onTZ, on
 
           {/* ── GÉNÉRAL ── */}
           {tab === 'general' && (
-            <div className="sp-general-layout">
-              <div className="sp-general">
-                <p className="sp-section-title">Détection & affichage</p>
-                <div className="sp-sliders">
-                  {([
-                    ['Rayon de détection', 'radius', 10, 500, 10, (v: number) => `${v} km`],
-                    ['Appareils max affichés', 'maxAircraft', 1, 50, 1, (v: number) => `${v}`],
-                    ['Alerte atterrissage', 'alertMinutes', 1, 30, 1, (v: number) => `${v} min`],
-                  ] as [string, keyof AppSettings, number, number, number, (v: number) => string][]).map(([label, key, min, max, step, fmt]) => (
-                    <label key={key} className="sp-slider-item">
-                      <div className="sp-slider-header">
-                        <span className="sp-slider-label">{label}</span>
-                        <span className="sp-slider-val">{fmt(settings[key] as number)}</span>
-                      </div>
-                      <input type="range" min={min} max={max} step={step}
-                        value={settings[key] as number}
-                        onChange={e => onSettings({ ...settings, [key]: +e.target.value })}
-                      />
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div className="sp-compass-section">
-                <p className="sp-section-title">Orientation du mur</p>
-                <p className="sp-compass-hint">Fais glisser l&apos;aiguille ou clique sur un cadran pour définir la direction vers laquelle ton mur d&apos;affichage est tourné.</p>
-                <CompassDial
-                  value={settings.orientation}
-                  onChange={deg => onSettings({ ...settings, orientation: deg })}
-                />
+            <div className="sp-general">
+              <p className="sp-section-title">Détection & affichage</p>
+              <div className="sp-sliders">
+                {([
+                  ['Rayon de détection', 'radius', 10, 500, 10, (v: number) => `${v} km`],
+                  ['Appareils max affichés', 'maxAircraft', 1, 50, 1, (v: number) => `${v}`],
+                  ['Alerte atterrissage', 'alertMinutes', 1, 30, 1, (v: number) => `${v} min`],
+                ] as [string, keyof AppSettings, number, number, number, (v: number) => string][]).map(([label, key, min, max, step, fmt]) => (
+                  <label key={key} className="sp-slider-item">
+                    <div className="sp-slider-header">
+                      <span className="sp-slider-label">{label}</span>
+                      <span className="sp-slider-val">{fmt(settings[key] as number)}</span>
+                    </div>
+                    <input type="range" min={min} max={max} step={step}
+                      value={settings[key] as number}
+                      onChange={e => onSettings({ ...settings, [key]: +e.target.value })}
+                    />
+                  </label>
+                ))}
               </div>
             </div>
           )}
@@ -235,17 +224,28 @@ export default function SettingsPanel({ settings, activeTZ, onSettings, onTZ, on
                 </div>
               </div>
 
-              {/* Droite : carte agrandie */}
-              <div className="sp-map-wrap">
-                <MiniMap
-                  center={[parseFloat(tempLat) || settings.location.lat, parseFloat(tempLon) || settings.location.lon]}
-                  radius={tempRadius}
-                  onSelect={(lat, lon) => {
-                    setTempLat(lat.toFixed(4))
-                    setTempLon(lon.toFixed(4))
-                  }}
-                />
-                <div className="sp-map-hint">Cliquer ou glisser le marqueur • Cercle = zone de détection</div>
+              {/* Droite : carte agrandie + orientation */}
+              <div className="sp-loc-right">
+                <div className="sp-map-wrap">
+                  <MiniMap
+                    center={[parseFloat(tempLat) || settings.location.lat, parseFloat(tempLon) || settings.location.lon]}
+                    radius={tempRadius}
+                    onSelect={(lat, lon) => {
+                      setTempLat(lat.toFixed(4))
+                      setTempLon(lon.toFixed(4))
+                    }}
+                  />
+                  <div className="sp-map-hint">Cliquer ou glisser le marqueur • Cercle = zone de détection</div>
+                </div>
+
+                <div className="sp-compass-section">
+                  <p className="sp-section-title">Orientation du mur</p>
+                  <p className="sp-compass-hint">Fais glisser l&apos;aiguille pour définir la direction vers laquelle ton mur d&apos;affichage est tourné.</p>
+                  <CompassDial
+                    value={settings.orientation}
+                    onChange={deg => onSettings({ ...settings, orientation: deg })}
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -371,8 +371,7 @@ export default function SettingsPanel({ settings, activeTZ, onSettings, onTZ, on
         }
 
         /* GÉNÉRAL */
-        .sp-general-layout { display: grid; grid-template-columns: 1fr 260px; gap: 28px; align-items: start; }
-        .sp-general { display: flex; flex-direction: column; gap: 6px; }
+        .sp-general { display: flex; flex-direction: column; gap: 6px; max-width: 640px; }
         .sp-sliders { display: flex; flex-direction: column; gap: 18px; }
         .sp-slider-item { display: flex; flex-direction: column; gap: 8px; }
         .sp-slider-header { display: flex; align-items: center; justify-content: space-between; }
@@ -392,6 +391,7 @@ export default function SettingsPanel({ settings, activeTZ, onSettings, onTZ, on
 
         /* LOCALISATION */
         .sp-location { display: grid; grid-template-columns: 300px 1fr; gap: 20px; height: 100%; min-height: 420px; }
+        .sp-loc-right { display: flex; flex-direction: column; gap: 16px; }
         .sp-loc-controls { display: flex; flex-direction: column; gap: 8px; }
         .sp-field { display: flex; flex-direction: column; gap: 4px; }
         .sp-field label { font-size: 11px; color: var(--text-muted); }
@@ -431,7 +431,7 @@ export default function SettingsPanel({ settings, activeTZ, onSettings, onTZ, on
         .sp-map-wrap {
           position: relative; border-radius: var(--radius-md);
           overflow: hidden; border: 1px solid var(--border);
-          min-height: 380px;
+          min-height: 260px; flex-shrink: 0;
         }
         .sp-map-hint {
           position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
@@ -499,10 +499,9 @@ export default function SettingsPanel({ settings, activeTZ, onSettings, onTZ, on
 
         @media (max-width: 700px) {
           .sp-modal { max-width: 100%; width: 100%; max-height: 100%; border-radius: 14px 14px 0 0; top: auto; bottom: 0; }
-          .sp-general-layout { grid-template-columns: 1fr; }
           .sp-location { grid-template-columns: 1fr; }
           .sp-timezones { grid-template-columns: 1fr; }
-          .sp-map-wrap { min-height: 240px; }
+          .sp-map-wrap { min-height: 220px; }
         }
       `}</style>
     </>

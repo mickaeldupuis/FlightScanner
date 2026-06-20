@@ -1,6 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { haversineKm, bearingDeg } from '@/lib/utils'
 
+// ── OAuth2 token cache (OpenSky exige OAuth2 depuis le 18 mars 2026) ──
+let cachedToken: { token: string; expiresAt: number } | null = null
+
+async function getOpenSkyToken(): Promise<string | null> {
+  const clientId = process.env.OPENSKY_CLIENT_ID
+  const clientSecret = process.env.OPENSKY_CLIENT_SECRET
+  if (!clientId || !clientSecret) return null
+
+  if (cachedToken && cachedToken.expiresAt > Date.now()) return cachedToken.token
+
+  try {
+    const res = await fetch(
+      'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'client_credentials',
+          client_id: clientId,
+          client_secret: clientSecret,
+        }),
+      }
+    )
+    if (!res.ok) return null
+    const data = await res.json()
+    cachedToken = { token: data.access_token, expiresAt: Date.now() + (data.expires_in - 30) * 1000 }
+    return cachedToken.token
+  } catch {
+    return null
+  }
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const lat = parseFloat(searchParams.get('lat') || '0')
@@ -17,24 +49,36 @@ export async function GET(req: NextRequest) {
 
   try {
     const url = `https://opensky-network.org/api/states/all?lamin=${lamin}&lamax=${lamax}&lomin=${lomin}&lomax=${lomax}`
-    const res = await fetch(url, {
-      headers: { 'Accept': 'application/json' },
-      next: { revalidate: 15 },
-    })
+
+    const token = await getOpenSkyToken()
+    const headers: Record<string, string> = { Accept: 'application/json' }
+    if (token) headers.Authorization = `Bearer ${token}`
+
+    const res = await fetch(url, { headers, cache: 'no-store' })
 
     if (!res.ok) {
-      return NextResponse.json({ error: 'OpenSky unavailable', states: [] }, { status: 200 })
+      // 403/429 = rate limit anonyme épuisé, ou clé invalide
+      const bodyText = await res.text().catch(() => '')
+      console.error(`OpenSky API ${res.status}: ${bodyText.slice(0, 300)}`)
+      return NextResponse.json({
+        aircraft: [],
+        time: Date.now(),
+        error: `OpenSky a renvoyé ${res.status}`,
+        authenticated: !!token,
+        hint: res.status === 403 || res.status === 429
+          ? 'Limite de requêtes anonymes probablement atteinte. Configurez OPENSKY_CLIENT_ID/OPENSKY_CLIENT_SECRET pour passer à 4000 req/jour.'
+          : undefined,
+      }, { status: 200 })
     }
 
     const data = await res.json()
-    const states = data.states || []
+    const states: unknown[][] = data.states || []
 
-    // Parse & enrich
     const aircraft = states
       .map((s: unknown[]) => {
         const aLat = s[6] as number | null
         const aLon = s[5] as number | null
-        if (!aLat || !aLon) return null
+        if (aLat == null || aLon == null) return null
         const distance = haversineKm(lat, lon, aLat, aLon)
         if (distance > radius) return null
         const bearing = bearingDeg(lat, lon, aLat, aLon)
@@ -44,7 +88,7 @@ export async function GET(req: NextRequest) {
           originCountry: s[2],
           longitude: aLon,
           latitude: aLat,
-          altitude: s[7] ?? s[13],   // baro alt, fallback geo
+          altitude: s[7] ?? s[13],
           onGround: s[8],
           velocity: s[9],
           trueTrack: s[10],
@@ -55,11 +99,16 @@ export async function GET(req: NextRequest) {
           bearing: Math.round(bearing),
         }
       })
-      .filter(Boolean)
-      .sort((a: {distance:number}, b: {distance:number}) => a.distance - b.distance)
+      .filter((a): a is NonNullable<typeof a> => a !== null)
+      .sort((a, b) => a.distance - b.distance)
       .slice(0, max)
 
-    return NextResponse.json({ aircraft, time: Date.now() })
+    return NextResponse.json({
+      aircraft,
+      time: Date.now(),
+      authenticated: !!token,
+      totalInBox: states.length,
+    })
   } catch (err) {
     console.error('Flights API error:', err)
     return NextResponse.json({ aircraft: [], time: Date.now(), error: 'fetch failed' })

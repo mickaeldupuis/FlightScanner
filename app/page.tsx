@@ -30,6 +30,7 @@ export default function FlightWall() {
   const [activeTZ, setActiveTZ] = useState<string[]>(DEFAULT_TZ)
   const [aircraft, setAircraft] = useState<Aircraft[]>([])
   const [loading, setLoading] = useState(false)
+  const [apiError, setApiError] = useState<string | null>(null)
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
   const [weather, setWeather] = useState<WeatherData | null>(null)
   const [sun, setSun] = useState<SunData | null>(null)
@@ -76,8 +77,11 @@ export default function FlightWall() {
       const res = await fetch(`/api/flights?lat=${lat}&lon=${lon}&radius=${settings.radius}&max=${settings.maxAircraft}`)
       const data = await res.json()
       setAircraft(data.aircraft || [])
+      setApiError(data.error ? `${data.error}${data.hint ? ' — ' + data.hint : ''}` : null)
       setLastUpdate(new Date())
-    } catch { /* silent */ }
+    } catch {
+      setApiError('Impossible de contacter le serveur FlightWall.')
+    }
     setLoading(false)
   }, [settings.location, settings.radius, settings.maxAircraft])
 
@@ -240,6 +244,15 @@ export default function FlightWall() {
         {/* NO FLIGHTS */}
         {noFlights ? (
           <div className="fw-idle fade-up">
+            {apiError && (
+              <div className="fw-error-banner">
+                <span className="fw-error-icon">⚠️</span>
+                <div>
+                  <strong>Service de détection indisponible</strong>
+                  <p>{apiError}</p>
+                </div>
+              </div>
+            )}
             <div className="fw-idle-radar">
               <svg className="fw-radar-anim" width="110" height="110" viewBox="0 0 110 110" aria-hidden="true">
                 <circle cx="55" cy="55" r="52" fill="none" stroke="rgba(56,100,160,.25)" strokeWidth="1"/>
@@ -248,7 +261,7 @@ export default function FlightWall() {
                 <line x1="55" y1="55" x2="55" y2="3" stroke="var(--accent)" strokeWidth="1.5" strokeOpacity=".5"/>
                 <path d="M55 55 L55 3 A52 52 0 0 1 107 62 Z" fill="var(--accent)" fillOpacity=".07"/>
               </svg>
-              <span className="fw-idle-lbl">Aucun appareil dans {settings.radius} km</span>
+              <span className="fw-idle-lbl">{apiError ? 'Aucune donnée reçue' : `Aucun appareil dans ${settings.radius} km`}</span>
             </div>
             <div className="fw-idle-panels">
               {weather && (
@@ -432,6 +445,10 @@ export default function FlightWall() {
         .fw-tmap-wrap { min-height:160px; }
         /* IDLE */
         .fw-idle { display:flex; flex-direction:column; align-items:center; gap:28px; padding:40px 0; }
+        .fw-error-banner { display:flex; align-items:flex-start; gap:12px; background:rgba(245,158,11,.08); border:1px solid rgba(245,158,11,.3); border-radius:var(--radius-md); padding:14px 18px; max-width:560px; }
+        .fw-error-icon { font-size:20px; flex-shrink:0; }
+        .fw-error-banner strong { display:block; font-size:13px; color:var(--amber); margin-bottom:4px; }
+        .fw-error-banner p { font-size:12px; color:var(--text-secondary); line-height:1.5; margin:0; }
         .fw-idle-radar { display:flex; flex-direction:column; align-items:center; gap:14px; }
         .fw-radar-anim { animation:scan 4s linear infinite; transform-origin:55px 55px; }
         .fw-idle-lbl { font-size:12px; color:var(--text-muted); letter-spacing:.1em; text-transform:uppercase; font-family:var(--font-mono); }
