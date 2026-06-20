@@ -57,7 +57,14 @@ async function fetchFromAdsbOne(lat: number, lon: number, radius: number, max: n
   const url = `https://api.adsb.one/v2/point/${lat}/${lon}/${radiusNm}`
   const { signal, clear } = withTimeout(8000)
   try {
-    const res = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store', signal })
+    const res = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      },
+      cache: 'no-store',
+      signal,
+    })
     clear()
     if (!res.ok) {
       const body = await res.text().catch(() => '')
@@ -110,7 +117,10 @@ async function getOpenSkyToken(): Promise<string | null> {
       'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
         body: new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, client_secret: clientSecret }),
         signal,
       }
@@ -133,7 +143,10 @@ async function fetchFromOpenSky(lat: number, lon: number, radius: number, max: n
   const lomax = lon + deg / Math.cos(lat * Math.PI / 180)
 
   const token = await getOpenSkyToken()
-  const headers: Record<string, string> = { Accept: 'application/json' }
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  }
   if (token) headers.Authorization = `Bearer ${token}`
 
   const url = `https://opensky-network.org/api/states/all?lamin=${lamin}&lamax=${lamax}&lomin=${lomin}&lomax=${lomax}`
