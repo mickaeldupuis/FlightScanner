@@ -7,9 +7,14 @@ export const maxDuration = 30 // secondes — Hobby plan autorise jusqu'à 60s
 
 // ───────────────────────────────────────────────────────────
 // Sources de données, dans l'ordre de priorité :
-// 1. ADSB.one (api.adsb.one) — gratuit, sans clé, fiable, simple
-// 2. OpenSky Network — fallback si ADSB.one échoue (OAuth2 si configuré)
+// 1. AirLabs — clé API gratuite (1000 req/mois), bbox géographique natif,
+//    infrastructure pro sans blocage anti-cloud connu
+// 2. ADSB.one — gratuit, sans clé, mais bloqué par Cloudflare depuis Vercel
+// 3. OpenSky Network — fallback final (OAuth2 si configuré, mais bloqué
+//    aussi depuis Vercel au moment de l'écriture de ce code)
 // ───────────────────────────────────────────────────────────
+
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 
 function withTimeout(ms: number): { signal: AbortSignal; clear: () => void } {
   const controller = new AbortController()
@@ -19,9 +24,7 @@ function withTimeout(ms: number): { signal: AbortSignal; clear: () => void } {
 
 // Bug connu Vercel/Next.js : Undici (le client fetch natif de Node sur Vercel)
 // échoue parfois aléatoirement avec UND_ERR_CONNECT_TIMEOUT sur des connexions
-// sortantes (~30% des requêtes selon les rapports communautaires), indépendamment
-// de la lenteur réelle du serveur distant. Une nouvelle tentative immédiate
-// résout généralement le problème.
+// sortantes, indépendamment de la lenteur réelle du serveur distant.
 async function fetchWithRetry(url: string, options: RequestInit, retries = 2, retryDelayMs = 400): Promise<Response> {
   let lastErr: unknown
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -75,17 +78,82 @@ function buildAircraft(lat: number, lon: number, radius: number, aLat: number, a
   return { ...base, longitude: aLon, latitude: aLat, distance: Math.round(distance * 10) / 10, bearing: Math.round(bearing) }
 }
 
-// ── Source 1 : ADSB.one ──
+// Convertit un rayon (km) autour d'un point en bounding box [swLat, swLon, neLat, neLon]
+function radiusToBbox(lat: number, lon: number, radiusKm: number): [number, number, number, number] {
+  const deg = radiusKm / 111
+  const lonDeg = deg / Math.cos((lat * Math.PI) / 180)
+  return [lat - deg, lon - lonDeg, lat + deg, lon + lonDeg]
+}
+
+// ── Source 1 : AirLabs ──
+async function fetchFromAirLabs(lat: number, lon: number, radius: number, max: number) {
+  const key = process.env.AIRLABS_KEY
+  if (!key) throw new Error('AIRLABS_KEY non configurée')
+
+  const [swLat, swLon, neLat, neLon] = radiusToBbox(lat, lon, radius)
+  const bbox = `${swLat},${swLon},${neLat},${neLon}`
+  const url = `https://airlabs.co/api/v9/flights?api_key=${key}&bbox=${bbox}`
+
+  const { signal, clear } = withTimeout(12000)
+  try {
+    const res = await fetchWithRetry(url, {
+      headers: { Accept: 'application/json', 'User-Agent': BROWSER_UA },
+      cache: 'no-store',
+      signal,
+    })
+    clear()
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      throw new Error(`AirLabs ${res.status}: ${body.slice(0, 200)}`)
+    }
+    const data = await res.json()
+
+    if (data?.error) {
+      throw new Error(`AirLabs: ${data.error.message || JSON.stringify(data.error)}`)
+    }
+
+    const list: Record<string, unknown>[] = Array.isArray(data?.response) ? data.response : []
+
+    const aircraft = list
+      .map((f) => {
+        const aLat = f.lat as number | undefined
+        const aLon = f.lng as number | undefined
+        if (aLat == null || aLon == null) return null
+
+        const status = f.status as string | undefined
+
+        return buildAircraft(lat, lon, radius, aLat, aLon, {
+          icao24: String(f.hex || '').toUpperCase(),
+          callsign: (f.flight_icao as string) || (f.flight_iata as string) || (f.flight_number as string) || null,
+          originCountry: (f.flag as string) || '—',
+          altitude: f.alt != null ? (f.alt as number) : null, // déjà en mètres chez AirLabs
+          onGround: status === 'landed' || status === 'scheduled',
+          velocity: f.speed != null ? (f.speed as number) * 0.277778 : null, // km/h → m/s
+          trueTrack: (f.dir as number) ?? null,
+          verticalRate: f.v_speed != null ? (f.v_speed as number) : null, // déjà en m/s
+          squawk: (f.squawk as string) || null,
+          category: 0,
+        })
+      })
+      .filter((a): a is NormalizedAircraft => a !== null)
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, max)
+
+    return { aircraft, totalInBox: list.length, source: 'airlabs' as const }
+  } catch (err) {
+    clear()
+    throw err
+  }
+}
+
+// ── Source 2 : ADSB.one (fallback) ──
 async function fetchFromAdsbOne(lat: number, lon: number, radius: number, max: number) {
-  const radiusNm = Math.min(Math.round(radius / 1.852), 250) // km → nm, plafonné à 250nm
+  const radiusNm = Math.min(Math.round(radius / 1.852), 250)
   const url = `https://api.adsb.one/v2/point/${lat}/${lon}/${radiusNm}`
   const { signal, clear } = withTimeout(8000)
   try {
     const res = await fetchWithRetry(url, {
-      headers: {
-        Accept: 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      },
+      headers: { Accept: 'application/json', 'User-Agent': BROWSER_UA },
       cache: 'no-store',
       signal,
     })
@@ -105,12 +173,12 @@ async function fetchFromAdsbOne(lat: number, lon: number, radius: number, max: n
         return buildAircraft(lat, lon, radius, aLat, aLon, {
           icao24: String(a.hex ?? '').toUpperCase(),
           callsign: (a.flight as string)?.trim() || null,
-          originCountry: '—', // ADSB.one ne fournit pas le pays directement
+          originCountry: '—',
           altitude: a.alt_baro === 'ground' ? 0 : (a.alt_baro != null ? (a.alt_baro as number) * 0.3048 : (a.alt_geom != null ? (a.alt_geom as number) * 0.3048 : null)),
           onGround: a.alt_baro === 'ground',
-          velocity: a.gs != null ? (a.gs as number) * 0.514444 : null, // knots → m/s
+          velocity: a.gs != null ? (a.gs as number) * 0.514444 : null,
           trueTrack: (a.track as number) ?? null,
-          verticalRate: a.baro_rate != null ? (a.baro_rate as number) * 0.00508 : null, // ft/min → m/s
+          verticalRate: a.baro_rate != null ? (a.baro_rate as number) * 0.00508 : null,
           squawk: (a.squawk as string) || null,
           category: a.category ? parseInt(String(a.category).replace(/\D/g, '')) || 0 : 0,
         })
@@ -126,7 +194,7 @@ async function fetchFromAdsbOne(lat: number, lon: number, radius: number, max: n
   }
 }
 
-// ── Source 2 : OpenSky Network (fallback) ──
+// ── Source 3 : OpenSky Network (fallback final) ──
 let cachedToken: { token: string; expiresAt: number } | null = null
 
 async function getOpenSkyToken(): Promise<string | null> {
@@ -141,10 +209,7 @@ async function getOpenSkyToken(): Promise<string | null> {
       'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token',
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': BROWSER_UA },
         body: new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, client_secret: clientSecret }),
         signal,
       }
@@ -167,10 +232,7 @@ async function fetchFromOpenSky(lat: number, lon: number, radius: number, max: n
   const lomax = lon + deg / Math.cos(lat * Math.PI / 180)
 
   const token = await getOpenSkyToken()
-  const headers: Record<string, string> = {
-    Accept: 'application/json',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  }
+  const headers: Record<string, string> = { Accept: 'application/json', 'User-Agent': BROWSER_UA }
   if (token) headers.Authorization = `Bearer ${token}`
 
   const url = `https://opensky-network.org/api/states/all?lamin=${lamin}&lamax=${lamax}&lomin=${lomin}&lomax=${lomax}`
@@ -223,16 +285,29 @@ export async function GET(req: NextRequest) {
 
   const errors: string[] = []
 
-  // 1. Tentative ADSB.one
-  try {
-    const result = await fetchFromAdsbOne(lat, lon, radius, max)
-    return NextResponse.json({ ...result, time: Date.now() })
-  } catch (err) {
-    errors.push(`ADSB.one: ${describeError(err)}`)
-    console.error('ADSB.one failed:', err)
+  // 1. AirLabs (source principale)
+  if (process.env.AIRLABS_KEY) {
+    try {
+      const result = await fetchFromAirLabs(lat, lon, radius, max)
+      return NextResponse.json({ ...result, time: Date.now() })
+    } catch (err) {
+      errors.push(`AirLabs: ${describeError(err)}`)
+      console.error('AirLabs failed:', err)
+    }
+  } else {
+    errors.push('AirLabs: clé AIRLABS_KEY non configurée')
   }
 
-  // 2. Fallback OpenSky
+  // 2. Fallback ADSB.one
+  try {
+    const result = await fetchFromAdsbOne(lat, lon, radius, max)
+    return NextResponse.json({ ...result, time: Date.now(), fallbackUsed: true })
+  } catch (err) {
+    errors.push(`ADSB.one: ${describeError(err)}`)
+    console.error('ADSB.one fallback failed:', err)
+  }
+
+  // 3. Fallback final OpenSky
   try {
     const result = await fetchFromOpenSky(lat, lon, radius, max)
     return NextResponse.json({ ...result, time: Date.now(), fallbackUsed: true })
@@ -241,7 +316,6 @@ export async function GET(req: NextRequest) {
     console.error('OpenSky fallback failed:', err)
   }
 
-  // Les deux sources ont échoué
   return NextResponse.json({
     aircraft: [],
     time: Date.now(),

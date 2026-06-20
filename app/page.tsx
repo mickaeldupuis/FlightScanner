@@ -98,9 +98,33 @@ export default function FlightWall() {
   useEffect(() => {
     fetchFlights()
     fetchAmbient()
-    if (intervalRef.current) clearInterval(intervalRef.current)
-    intervalRef.current = setInterval(fetchFlights, 20000)
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
+
+    const startInterval = () => {
+      if (intervalRef.current) clearInterval(intervalRef.current)
+      intervalRef.current = setInterval(fetchFlights, 45000) // 45s : économise le quota API
+    }
+    const stopInterval = () => {
+      if (intervalRef.current) clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
+
+    startInterval()
+
+    // Pause l'actualisation auto quand l'onglet n'est pas visible (économie de quota)
+    const handleVisibility = () => {
+      if (document.hidden) {
+        stopInterval()
+      } else {
+        fetchFlights() // rattrape immédiatement au retour
+        startInterval()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    return () => {
+      stopInterval()
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
   }, [fetchFlights, fetchAmbient])
 
   // Photos
@@ -408,7 +432,7 @@ export default function FlightWall() {
             <span>{aircraft.length} appareil{aircraft.length > 1 ? 's' : ''} · rayon {settings.radius} km</span>
             {weather && <span>{weatherIcon(weather.weatherCode)} {weather.temperature}°C · 💨 {weather.windSpeed} km/h</span>}
             {sun && <span>🌅 {sun.sunrise} — 🌇 {sun.sunset}</span>}
-            <span className="fw-status-r">MàJ auto 20s · OpenSky Network</span>
+            <span className="fw-status-r">MàJ auto 45s</span>
           </div>
         )}
       </main>
