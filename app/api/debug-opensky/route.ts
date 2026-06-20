@@ -10,73 +10,56 @@ function withTimeout(ms: number) {
   return { signal: controller.signal, clear: () => clearTimeout(id) }
 }
 
+async function tryOnce(label: string) {
+  const t0 = Date.now()
+  const { signal, clear } = withTimeout(8000)
+  try {
+    // Test contre un endpoint ultra-fiable (httpbin-like) pour isoler
+    // si le problème est spécifique à OpenSky/ADSB.one ou général à Vercel↔Internet
+    const res = await fetch('https://api.github.com/zen', { signal, cache: 'no-store' })
+    clear()
+    const text = await res.text()
+    return { label, ok: true, status: res.status, durationMs: Date.now() - t0, bodyPreview: text.slice(0, 80) }
+  } catch (err) {
+    clear()
+    return { label, ok: false, durationMs: Date.now() - t0, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) }
+  }
+}
+
 export async function GET() {
   const report: Record<string, unknown> = {}
   const clientId = process.env.OPENSKY_CLIENT_ID
   const clientSecret = process.env.OPENSKY_CLIENT_SECRET
   report.hasCredentials = !!clientId && !!clientSecret
-  report.clientIdLength = clientId?.length ?? 0
 
-  // Étape 1 : OAuth2
-  const t0 = Date.now()
-  const { signal: s1, clear: c1 } = withTimeout(15000)
-  try {
-    const res = await fetch(
-      'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'client_credentials',
-          client_id: clientId || '',
-          client_secret: clientSecret || '',
-        }),
-        signal: s1,
-      }
-    )
-    c1()
-    report.oauthDurationMs = Date.now() - t0
-    report.oauthStatus = res.status
-    const text = await res.text()
-    report.oauthBodyPreview = text.slice(0, 300)
+  // ── Test 0 : connectivité générale Vercel → Internet (api.github.com, très fiable) ──
+  report.sanityChecks = await Promise.all([tryOnce('try1'), tryOnce('try2'), tryOnce('try3')])
 
-    if (!res.ok) {
-      return NextResponse.json(report)
-    }
-
-    const data = JSON.parse(text)
-    const token = data.access_token
-    report.tokenObtained = !!token
-    report.tokenExpiresIn = data.expires_in
-
-    // Étape 2 : appel states/all (zone minuscule pour répondre vite)
-    const t1 = Date.now()
-    const { signal: s2, clear: c2 } = withTimeout(15000)
+  // ── Test OAuth2 OpenSky (3 tentatives) ──
+  const oauthAttempts = []
+  for (let i = 0; i < 3; i++) {
+    const t0 = Date.now()
+    const { signal, clear } = withTimeout(8000)
     try {
-      const res2 = await fetch(
-        'https://opensky-network.org/api/states/all?lamin=48.8&lamax=48.9&lomin=2.3&lomax=2.4',
+      const res = await fetch(
+        'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token',
         {
-          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-          signal: s2,
-          cache: 'no-store',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId || '', client_secret: clientSecret || '' }),
+          signal,
         }
       )
-      c2()
-      report.statesDurationMs = Date.now() - t1
-      report.statesStatus = res2.status
-      const text2 = await res2.text()
-      report.statesBodyPreview = text2.slice(0, 300)
+      clear()
+      const text = await res.text()
+      oauthAttempts.push({ attempt: i + 1, ok: res.ok, status: res.status, durationMs: Date.now() - t0, bodyPreview: text.slice(0, 150) })
+      if (res.ok) break
     } catch (err) {
-      c2()
-      report.statesError = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
-      report.statesDurationMs = Date.now() - t1
+      clear()
+      oauthAttempts.push({ attempt: i + 1, ok: false, durationMs: Date.now() - t0, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) })
     }
-
-    return NextResponse.json(report)
-  } catch (err) {
-    c1()
-    report.oauthError = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
-    report.oauthDurationMs = Date.now() - t0
-    return NextResponse.json(report)
   }
+  report.oauthAttempts = oauthAttempts
+
+  return NextResponse.json(report)
 }

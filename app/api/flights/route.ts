@@ -17,6 +17,30 @@ function withTimeout(ms: number): { signal: AbortSignal; clear: () => void } {
   return { signal: controller.signal, clear: () => clearTimeout(id) }
 }
 
+// Bug connu Vercel/Next.js : Undici (le client fetch natif de Node sur Vercel)
+// échoue parfois aléatoirement avec UND_ERR_CONNECT_TIMEOUT sur des connexions
+// sortantes (~30% des requêtes selon les rapports communautaires), indépendamment
+// de la lenteur réelle du serveur distant. Une nouvelle tentative immédiate
+// résout généralement le problème.
+async function fetchWithRetry(url: string, options: RequestInit, retries = 2, retryDelayMs = 400): Promise<Response> {
+  let lastErr: unknown
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fetch(url, options)
+    } catch (err) {
+      lastErr = err
+      const isConnectIssue = err instanceof Error && (
+        err.message.includes('fetch failed') ||
+        err.message.includes('UND_ERR_CONNECT_TIMEOUT') ||
+        err.name === 'TypeError'
+      )
+      if (!isConnectIssue || attempt === retries) throw err
+      await new Promise(r => setTimeout(r, retryDelayMs * (attempt + 1)))
+    }
+  }
+  throw lastErr
+}
+
 function describeError(err: unknown): string {
   if (err instanceof Error) {
     if (err.name === 'AbortError') return 'Timeout : le service n\'a pas répondu à temps'
@@ -57,7 +81,7 @@ async function fetchFromAdsbOne(lat: number, lon: number, radius: number, max: n
   const url = `https://api.adsb.one/v2/point/${lat}/${lon}/${radiusNm}`
   const { signal, clear } = withTimeout(8000)
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithRetry(url, {
       headers: {
         Accept: 'application/json',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -113,7 +137,7 @@ async function getOpenSkyToken(): Promise<string | null> {
 
   const { signal, clear } = withTimeout(8000)
   try {
-    const res = await fetch(
+    const res = await fetchWithRetry(
       'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token',
       {
         method: 'POST',
@@ -152,7 +176,7 @@ async function fetchFromOpenSky(lat: number, lon: number, radius: number, max: n
   const url = `https://opensky-network.org/api/states/all?lamin=${lamin}&lamax=${lamax}&lomin=${lomin}&lomax=${lomax}`
   const { signal, clear } = withTimeout(10000)
   try {
-    const res = await fetch(url, { headers, cache: 'no-store', signal })
+    const res = await fetchWithRetry(url, { headers, cache: 'no-store', signal })
     clear()
     if (!res.ok) {
       const body = await res.text().catch(() => '')
