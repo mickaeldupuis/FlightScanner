@@ -149,6 +149,7 @@ export default function FlightWall() {
   const selectedAc = aircraft.find(a => a.icao24 === selectedIcao)
 
   return (
+    <>
     <div className="fw-shell">
 
       {/* ══ TOPBAR ══ */}
@@ -193,17 +194,6 @@ export default function FlightWall() {
           </button>
         </div>
       </header>
-
-      {/* ══ SETTINGS ══ */}
-      {showSettings && (
-        <SettingsPanel
-          settings={settings}
-          activeTZ={activeTZ}
-          onSettings={updateSettings}
-          onTZ={updateTZ}
-          onClose={() => setShowSettings(false)}
-        />
-      )}
 
       {/* ══ CLOCK STRIP ══ */}
       <WorldClock activeTZ={activeTZ} />
@@ -508,5 +498,17 @@ export default function FlightWall() {
         }
       `}</style>
     </div>
+
+    {/* ══ SETTINGS MODAL (portail hors du flux) ══ */}
+    {showSettings && (
+      <SettingsPanel
+        settings={settings}
+        activeTZ={activeTZ}
+        onSettings={updateSettings}
+        onTZ={updateTZ}
+        onClose={() => setShowSettings(false)}
+      />
+    )}
+    </>
   )
 }

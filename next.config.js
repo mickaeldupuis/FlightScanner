@@ -4,6 +4,7 @@ const nextConfig = {
     remotePatterns: [
       { protocol: 'https', hostname: '**.planespotters.net' },
       { protocol: 'https', hostname: 'www.planespotters.net' },
+      { protocol: 'https', hostname: 'daisycon.io' },
     ],
   },
 }
