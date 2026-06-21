@@ -29,6 +29,7 @@ export default function FlightWall() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [activeTZ, setActiveTZ] = useState<string[]>(DEFAULT_TZ)
   const [aircraft, setAircraft] = useState<Aircraft[]>([])
+  const [sourcesStatus, setSourcesStatus] = useState<Record<string, { ok: boolean; count: number }> | null>(null)
   const [loading, setLoading] = useState(false)
   const [apiError, setApiError] = useState<string | null>(null)
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
@@ -77,6 +78,7 @@ export default function FlightWall() {
       const res = await fetch(`/api/flights?lat=${lat}&lon=${lon}&radius=${settings.radius}&max=${settings.maxAircraft}`)
       const data = await res.json()
       setAircraft(data.aircraft || [])
+      setSourcesStatus(data.sourcesStatus || null)
       setApiError(data.error ? `${data.error}${data.hint ? ' — ' + data.hint : ''}` : null)
       setLastUpdate(new Date())
     } catch {
@@ -432,6 +434,14 @@ export default function FlightWall() {
             <span>{aircraft.length} appareil{aircraft.length > 1 ? 's' : ''} · rayon {settings.radius} km</span>
             {weather && <span>{weatherIcon(weather.weatherCode)} {weather.temperature}°C · 💨 {weather.windSpeed} km/h</span>}
             {sun && <span>🌅 {sun.sunrise} — 🌇 {sun.sunset}</span>}
+            {sourcesStatus && (
+              <span className="fw-sources-indicator" title="Sources de données ayant répondu">
+                {Object.entries(sourcesStatus).filter(([, v]) => v.ok).map(([k]) => (
+                  <span key={k} className="fw-source-dot" />
+                ))}
+                {Object.entries(sourcesStatus).filter(([, v]) => v.ok).length}/3 sources
+              </span>
+            )}
             <span className="fw-status-r">MàJ auto 45s</span>
           </div>
         )}
@@ -530,6 +540,8 @@ export default function FlightWall() {
         .fw-mini-dist { font-size:11px; color:var(--text-muted); }
         /* STATUS */
         .fw-status { display:flex; align-items:center; gap:16px; padding:8px 14px; background:var(--bg-panel); border:1px solid var(--border); font-size:11px; color:var(--text-muted); border-radius:var(--radius-md); flex-wrap:wrap; }
+        .fw-sources-indicator { display:flex; align-items:center; gap:4px; font-family:var(--font-mono); font-size:10px; }
+        .fw-source-dot { width:5px; height:5px; border-radius:50%; background:var(--green); display:inline-block; }
         .fw-status-r { margin-left:auto; font-family:var(--font-mono); font-size:10px; }
         @media (max-width:700px) {
           .fw-track-body { grid-template-columns:1fr; }
