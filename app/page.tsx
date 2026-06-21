@@ -15,7 +15,7 @@ const LS_SETTINGS = 'fw_settings'
 const LS_TZ = 'fw_active_tz'
 
 const DEFAULT_SETTINGS: AppSettings = {
-  location: { lat: 48.8566, lon: 2.3522, label: 'Paris, France' },
+  location: { lat: -17.5618, lon: -149.6099, label: 'Tahiti, Polynésie française' },
   radius: 100,
   maxAircraft: 20,
   orientation: 0,

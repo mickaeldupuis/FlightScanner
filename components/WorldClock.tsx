@@ -31,8 +31,8 @@ export const ALL_TZ = [
 ]
 
 export const DEFAULT_TZ = [
-  'UTC', 'Europe/Paris', 'Europe/London', 'Asia/Dubai',
-  'Asia/Tokyo', 'America/New_York', 'America/Los_Angeles', 'Australia/Sydney',
+  'UTC', 'Asia/Tokyo', 'Australia/Sydney', 'Pacific/Auckland',
+  'Pacific/Tahiti', 'America/Los_Angeles', 'Europe/Paris',
 ]
 
 interface Props {
